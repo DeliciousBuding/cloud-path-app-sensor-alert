@@ -22,7 +22,7 @@ import (
 
 const (
 	pluginID      = "io.github.deliciousbuding.cloud-path-app-sensor-alert"
-	pluginVersion = "0.1.7"
+	pluginVersion = "0.2.0"
 
 	jobArm            = "arm"
 	jobDisarm         = "disarm"
@@ -31,6 +31,11 @@ const (
 
 	emptyObjectSchema = `{"type":"object","properties":{},"additionalProperties":false}`
 	maxJobResults     = 128
+
+	summaryArmed          = "已布防，开始监测"
+	summaryDisarmed       = "已撤防，暂停监测"
+	summaryStatusArmed    = "当前已布防，正在监测"
+	summaryStatusDisarmed = "当前已撤防，未监测"
 )
 
 func ApplicationID() string { return pluginID }
@@ -136,7 +141,7 @@ func (s *Service) lookup(id string, create bool) (*instanceState, error) {
 	return st, nil
 }
 
-func (s *Service) ConfigureInstance(_ context.Context, req *application.ConfigureInstanceRequest) (*application.ConfigureInstanceResponse, error) {
+func (s *Service) ConfigureInstance(ctx context.Context, req *application.ConfigureInstanceRequest) (*application.ConfigureInstanceResponse, error) {
 	if req == nil {
 		return nil, status.Errorf(status.CodeInvalidArgument, "nil configure request")
 	}
@@ -187,17 +192,48 @@ func (s *Service) ConfigureInstance(_ context.Context, req *application.Configur
 		st.lastCommand = nil
 		st.jobResults = map[string]string{}
 		st.jobOrder = nil
-		if st.armed {
+		switch {
+		case st.armed:
 			if len(st.active) == 0 {
 				st.state = stateArmed
 				st.alert = AlertRecord{State: stateArmed, Severity: "info", Summary: "sensor alert armed"}
 			}
-		} else {
+		case cfg.AutoArm:
+			// Auto-arm makes "running" mean "monitoring". The arm record is
+			// flushed immediately when an effect stream is already attached,
+			// otherwise on the first event of this instance.
+			st.armed = true
+			st.state = stateArmed
+			st.alert = AlertRecord{State: stateArmed, Severity: "info", Summary: "sensor alert armed"}
+			st.armRecordPending = true
+		default:
 			st.state = stateDisarmed
 			st.alert = AlertRecord{State: stateDisarmed, Severity: "info", Summary: "sensor alert disarmed"}
+			st.armRecordPending = false
+		}
+		if err := s.flushAlertRecordLocked(ctx, st); err != nil {
+			return &application.ConfigureInstanceResponse{
+				PluginInstanceID: req.PluginInstanceID,
+				AppliedRevision:  st.configRev,
+				Status:           status.Errorf(status.CodeUnavailable, "%v", err),
+			}, nil
 		}
 	}
 	return &application.ConfigureInstanceResponse{PluginInstanceID: req.PluginInstanceID, AppliedRevision: st.configRev, Status: status.New()}, nil
+}
+
+// flushAlertRecordLocked emits the arm domain record once an effect stream is
+// attached. Auto-arm happens during ConfigureInstance, which may run before the
+// event stream exists, so the record is deferred until the first event.
+func (s *Service) flushAlertRecordLocked(ctx context.Context, st *instanceState) error {
+	if !st.armRecordPending || st.route == nil {
+		return nil
+	}
+	if err := s.emitAlertLocked(ctx, st); err != nil {
+		return err
+	}
+	st.armRecordPending = false
+	return nil
 }
 
 func validateBindings(bindings []application.Binding) (map[string]string, []application.BindingIssue) {
@@ -341,6 +377,9 @@ func (s *Service) handleEvent(ctx context.Context, ev *application.ApplicationEv
 	s.mu.Unlock()
 	if route != nil {
 		st.route = route.writer
+	}
+	if err := s.flushAlertRecordLocked(ctx, st); err != nil {
+		return err
 	}
 	switch u := ev.Union.(type) {
 	case *application.CapabilityEvent:
@@ -640,13 +679,13 @@ func (s *Service) RunJob(ctx context.Context, req *application.RunJobRequest) (*
 		if err != nil {
 			return nil, err
 		}
-		result = jsonText(map[string]any{"state": st.state, "armed": st.armed, "changed": changed, "alert": st.alertRecord()})
+		result = jsonText(map[string]any{"state": st.state, "armed": st.armed, "changed": changed, "summary": summaryArmed, "alert": st.alertRecord()})
 	case jobDisarm:
 		changed, err := s.transitionLocked(ctx, st, false)
 		if err != nil {
 			return nil, err
 		}
-		result = jsonText(map[string]any{"state": st.state, "armed": st.armed, "changed": changed, "alert": st.alertRecord()})
+		result = jsonText(map[string]any{"state": st.state, "armed": st.armed, "changed": changed, "summary": summaryDisarmed, "alert": st.alertRecord()})
 	case jobStatus:
 		result = jsonText(s.statusLocked(st))
 	case jobCheckFreshness:
@@ -675,6 +714,7 @@ func (s *Service) transitionLocked(ctx context.Context, st *instanceState, armed
 		if err := s.emitAlertLocked(ctx, st); err != nil {
 			return false, err
 		}
+		st.armRecordPending = false
 		return true, nil
 	}
 	st.state = stateDisarmed
@@ -682,6 +722,7 @@ func (s *Service) transitionLocked(ctx context.Context, st *instanceState, armed
 	if err := s.emitAlertLocked(ctx, st); err != nil {
 		return false, err
 	}
+	st.armRecordPending = false
 	if err := s.emitLightLocked(ctx, st, 0, "disarm"); err != nil {
 		return false, err
 	}
@@ -693,9 +734,13 @@ func (s *Service) statusLocked(st *instanceState) map[string]any {
 	for _, value := range st.pending {
 		pending = append(pending, value)
 	}
+	summary := summaryStatusDisarmed
+	if st.armed {
+		summary = summaryStatusArmed
+	}
 	return map[string]any{
 		"instance_id": st.id, "configured": st.configured, "bindings_valid": st.bindingsValid,
-		"bindings": st.bindings, "armed": st.armed, "state": st.state, "alert": st.alertRecord(),
+		"bindings": st.bindings, "armed": st.armed, "state": st.state, "summary": summary, "alert": st.alertRecord(),
 		"pending_commands": pending, "last_command": st.lastCommand,
 	}
 }
