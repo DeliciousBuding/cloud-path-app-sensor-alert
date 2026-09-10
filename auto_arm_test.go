@@ -124,9 +124,6 @@ func TestAutoArmDisabledKeepsDisarmedSemantics(t *testing.T) {
 	if status["state"] != stateDisarmed || status["armed"] != false {
 		t.Fatalf("auto_arm=false status = %+v", status)
 	}
-	if status["summary"] != summaryStatusDisarmed {
-		t.Fatalf("auto_arm=false status summary = %v", status["summary"])
-	}
 }
 
 func TestAutoArmIsIdempotentAcrossReconfigure(t *testing.T) {
@@ -166,34 +163,36 @@ func TestAutoArmIsIdempotentAcrossReconfigure(t *testing.T) {
 	}
 }
 
-func TestArmDisarmStatusResultsCarryReadableSummary(t *testing.T) {
+func TestArmDisarmStatusResultsCarryLocalizableState(t *testing.T) {
 	h := newHarness(t, DefaultConfig(), []application.Binding{
 		{RequirementID: TemperatureRequirement, EntityID: "temperature-1"},
 	})
 
+	// The console already localizes `state` (armed/disarmed). The app must not
+	// ship its own prose, or the English UI would render Chinese text.
 	armed := runJobSummary(t, h.svc, jobArm, "arm-summary")
-	if armed["summary"] != summaryArmed || armed["state"] != stateArmed || armed["armed"] != true {
+	if armed["state"] != stateArmed || armed["armed"] != true {
 		t.Fatalf("arm result = %+v", armed)
 	}
 
 	status := runJobSummary(t, h.svc, jobStatus, "status-armed")
-	if status["summary"] != summaryStatusArmed || status["state"] != stateArmed {
+	if status["state"] != stateArmed {
 		t.Fatalf("armed status result = %+v", status)
 	}
 
 	disarmed := runJobSummary(t, h.svc, jobDisarm, "disarm-summary")
-	if disarmed["summary"] != summaryDisarmed || disarmed["state"] != stateDisarmed || disarmed["armed"] != false {
+	if disarmed["state"] != stateDisarmed || disarmed["armed"] != false {
 		t.Fatalf("disarm result = %+v", disarmed)
 	}
 
 	status = runJobSummary(t, h.svc, jobStatus, "status-disarmed")
-	if status["summary"] != summaryStatusDisarmed || status["state"] != stateDisarmed {
+	if status["state"] != stateDisarmed {
 		t.Fatalf("disarmed status result = %+v", status)
 	}
 
-	// Replay of the arm idempotency key still reports the readable summary.
+	// Replay of the arm idempotency key still reports the armed state.
 	replayed := runJobSummary(t, h.svc, jobArm, "arm-summary")
-	if replayed["summary"] != summaryArmed {
+	if replayed["state"] != stateArmed {
 		t.Fatalf("replayed arm result = %+v", replayed)
 	}
 }

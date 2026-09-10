@@ -31,11 +31,6 @@ const (
 
 	emptyObjectSchema = `{"type":"object","properties":{},"additionalProperties":false}`
 	maxJobResults     = 128
-
-	summaryArmed          = "已布防，开始监测"
-	summaryDisarmed       = "已撤防，暂停监测"
-	summaryStatusArmed    = "当前已布防，正在监测"
-	summaryStatusDisarmed = "当前已撤防，未监测"
 )
 
 func ApplicationID() string { return pluginID }
@@ -679,13 +674,13 @@ func (s *Service) RunJob(ctx context.Context, req *application.RunJobRequest) (*
 		if err != nil {
 			return nil, err
 		}
-		result = jsonText(map[string]any{"state": st.state, "armed": st.armed, "changed": changed, "summary": summaryArmed, "alert": st.alertRecord()})
+		result = jsonText(map[string]any{"state": st.state, "armed": st.armed, "changed": changed, "alert": st.alertRecord()})
 	case jobDisarm:
 		changed, err := s.transitionLocked(ctx, st, false)
 		if err != nil {
 			return nil, err
 		}
-		result = jsonText(map[string]any{"state": st.state, "armed": st.armed, "changed": changed, "summary": summaryDisarmed, "alert": st.alertRecord()})
+		result = jsonText(map[string]any{"state": st.state, "armed": st.armed, "changed": changed, "alert": st.alertRecord()})
 	case jobStatus:
 		result = jsonText(s.statusLocked(st))
 	case jobCheckFreshness:
@@ -734,13 +729,9 @@ func (s *Service) statusLocked(st *instanceState) map[string]any {
 	for _, value := range st.pending {
 		pending = append(pending, value)
 	}
-	summary := summaryStatusDisarmed
-	if st.armed {
-		summary = summaryStatusArmed
-	}
 	return map[string]any{
 		"instance_id": st.id, "configured": st.configured, "bindings_valid": st.bindingsValid,
-		"bindings": st.bindings, "armed": st.armed, "state": st.state, "summary": summary, "alert": st.alertRecord(),
+		"bindings": st.bindings, "armed": st.armed, "state": st.state, "alert": st.alertRecord(),
 		"pending_commands": pending, "last_command": st.lastCommand,
 	}
 }

@@ -69,7 +69,7 @@ Manifest 声明 `ui.apiVersion: 1`，安装实例后注册导航“环境告警�
 | `status` | manual-only | 返回当前配置、绑定、告警记录、待完成命令和最近命令结果。 |
 | `check-freshness` | 自动 job | 只读返回绑定传感器的新鲜度报告，不采样、不触发告警。 |
 
-所有 job 的 `args_json` 必须是空对象 `{}`。`arm` / `disarm` 支持 job idempotency key；同一 key 重放返回同一结果。`arm` / `disarm` / `status` 的 ResultJSON 顶层包含人话可读的 `summary`（如「已布防，开始监测」「已撤防，暂停监测」「当前已布防，正在监测」），原有 `state`、`armed` 等字段保持不变。`check-freshness` 使用插件内部 120 秒窗口，仅用于诊断，不改变告警状态。
+所有 job 的 `args_json` 必须是空对象 `{}`。`arm` / `disarm` 支持 job idempotency key；同一 key 重放返回同一结果。`arm` / `disarm` / `status` 的 ResultJSON 顶层包含 `state`（`armed` / `disarmed`）与 `armed` 布尔值，由控制台按 `state` 本地化为中/英文案；**插件不返回语言相关的散文**，否则英文界面会出现中文。`check-freshness` 使用插件内部 120 秒窗口，仅用于诊断，不改变告警状态。
 
 ## 告警状态机
 
